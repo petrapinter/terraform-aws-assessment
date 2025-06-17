@@ -1,0 +1,24 @@
+.media-grid-container {
+  position: relative;
+  width: 100%;
+  padding: 20px;
+}
+
+.media-grid {
+  display: grid;
+  gap: 16px;
+  width: 100%;
+}
+
+.media-loading-more {
+  text-align: center;
+  padding: 20px;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.load-more-trigger {
+  height: 20px;
+  width: 100%;
+  margin-top: 20px;
+}
