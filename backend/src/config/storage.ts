@@ -29,7 +29,8 @@ export const initializeStorage = async (): Promise<void> => {
     accessKey: credentials.accessKeyId,
     secretKey: credentials.secretAccessKey,
     sessionToken: credentials.sessionToken === '' ? undefined : credentials.sessionToken,
-    pathStyle: true
+    pathStyle: true,
+    region: config.storage.region
   });
   // Check if bucket exists
   const bucketExists = await minioClient.bucketExists(BUCKET_NAME);

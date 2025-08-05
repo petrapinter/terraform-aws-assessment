@@ -17,12 +17,13 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
-    network_mode: host
+    networks:
+      - appnet
 
   # MinIO Object Storage
   minio:
     image: minio/minio
-    container_name: media-minio
+    container_name: minio
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -36,9 +37,10 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
       timeout: 20s
-      retries: 3
+      retries: 5
     restart: unless-stopped
-    network_mode: host
+    networks:
+      - appnet
 
   # MinIO Setup (create buckets)
   minio-setup:
@@ -49,36 +51,21 @@ services:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      # Create alias for MinIO
       mc alias set myminio http://minio:9000 minioadmin minioadmin;
-      
-      # Create buckets if they don't exist
       mc mb --ignore-existing myminio/media-sharing;
       mc mb --ignore-existing myminio/frontend-assets;
-      
-      # Create bucket policy file for media-sharing
-      echo '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::media-sharing/*"]}]}' > /tmp/media-sharing-policy.json
-      
-      # Apply the bucket policy
+      echo '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::media-sharing/*"]}]}' > /tmp/media-sharing-policy.json;
       mc policy set-json /tmp/media-sharing-policy.json myminio/media-sharing;
-      
-      # Set public access permissions for frontend-assets
       mc anonymous set download myminio/frontend-assets;
-      
-      # Create latest directory for frontend assets
       mkdir -p /tmp/frontend/latest;
-      
-      # Create placeholder index.html to test access
       echo '<html><body><h1>Frontend Placeholder</h1><p>This confirms MinIO access is working correctly.</p></body></html>' > /tmp/frontend/latest/index.html;
-      
-      # Upload placeholder file to MinIO
       mc cp /tmp/frontend/latest/index.html myminio/frontend-assets/latest/index.html;
-      
-      # Verify the upload and permissions
       echo 'MinIO setup completed successfully';
       exit 0;
       "
-    network_mode: host
+    networks:
+      - appnet
+
   # Backend API
   backend:
     build:
@@ -87,24 +74,26 @@ services:
     container_name: media-backend
     ports:
       - "3000:3000"
-    # Using entrypoint script from Dockerfile for migrations and startup
     environment:
       NODE_ENV: development
       PORT: 3000
-      DB_HOST: localhost
+      DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: postgres
       DB_PASSWORD: postgres
       DB_NAME: media_sharing
-      BLOB_STORAGE_ENDPOINT: localhost
+
+      # MinIO / S3 settings (belső elérés)
+      BLOB_STORAGE_ENDPOINT: minio
       BLOB_STORAGE_PORT: 9000
       BLOB_STORAGE_USE_SSL: "false"
       BLOB_STORAGE_ACCESS_KEY: minioadmin
       BLOB_STORAGE_SECRET_KEY: minioadmin
       BLOB_STORAGE_BUCKET: media-sharing
-      BLOB_STORAGE_REGION: eu-west-1
-      BLOB_STORAGE_PUBLIC_URL: localhost
-      BLOB_STORAGE_INTERNAL_ENDPOINT: localhost
+      BLOB_STORAGE_REGION: eu-central-1
+      BLOB_STORAGE_PUBLIC_URL: http://localhost:9000
+      BLOB_STORAGE_INTERNAL_ENDPOINT: minio
+
       TRUSTED_ORIGINS: "*"
       ALLOWED_HEADERS: "*"
     depends_on:
@@ -113,7 +102,13 @@ services:
       minio-setup:
         condition: service_completed_successfully
     restart: unless-stopped
-    network_mode: host
+    networks:
+      - appnet
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
   # Frontend Nginx Proxy
   frontend:
@@ -124,16 +119,22 @@ services:
     ports:
       - "80:80"
     environment:
-      MINIO_HOST: localhost
+      MINIO_HOST: minio
       MINIO_PORT: 9000
       MINIO_BUCKET: frontend-assets
       FRONTEND_VERSION: latest
-      API_URL: http://localhost:3000
+      API_URL: http://backend:3000
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
-    network_mode: host
+    networks:
+      - appnet
 
 volumes:
   postgres_data:
   minio_data:
+
+networks:
+  appnet:
+    driver: bridge
